@@ -1,0 +1,19 @@
+/target/
+/target-user/
+/target-user*/
+
+# Local agent handoff/instruction files.
+/AGENTS.md
+/HANDOFF.md
+/.agents/
+/.codex/
+
+# Local editor and OS metadata.
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local environment files.
+.env
+.env.*
