@@ -25,11 +25,29 @@ pub enum Block {
         code: String,
     },
     MathBlock(String),
+    Table {
+        alignments: Vec<TableAlignment>,
+        rows: Vec<TableRow>,
+    },
     Quote(Vec<Inline>),
     Image {
         path: PathBuf,
         alt: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableRow {
+    pub cells: Vec<Vec<Inline>>,
+    pub is_header: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableAlignment {
+    Default,
+    Left,
+    Center,
+    Right,
 }
 
 #[derive(Debug, Clone, PartialEq)]

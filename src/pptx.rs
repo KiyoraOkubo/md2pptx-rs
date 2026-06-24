@@ -8,7 +8,7 @@ use zip::{ZipWriter, write::SimpleFileOptions};
 
 use crate::{
     error::{Error, Result},
-    model::{Block, Inline, Presentation, Slide},
+    model::{Block, Inline, Presentation, Slide, TableAlignment},
     style::{BoxStyle, ListStyle, QuoteStyle, Style, TextStyle},
 };
 
@@ -321,6 +321,20 @@ fn render_slide(
                 shape_id += 1;
                 y += height + style.code_block.margin;
             }
+            Block::Table { alignments, rows } => {
+                let (table_xml, next_shape_id, height) = table_shapes(
+                    shape_id,
+                    padding,
+                    y,
+                    content_w,
+                    alignments,
+                    rows,
+                    &style.body,
+                );
+                shapes.push_str(&table_xml);
+                shape_id = next_shape_id;
+                y += height + style.body.margin_bottom;
+            }
             Block::Quote(inlines) => {
                 let height = estimate_text_height(inlines, content_w, style.quote.font_size, 1.2)
                     + style.quote.padding * 2.0;
@@ -386,6 +400,113 @@ fn render_slide(
 </p:sld>"#,
         color(&style.slide.background),
         shapes
+    )
+}
+
+fn table_shapes(
+    start_id: usize,
+    x: f64,
+    y: f64,
+    w: f64,
+    alignments: &[TableAlignment],
+    rows: &[crate::model::TableRow],
+    style: &TextStyle,
+) -> (String, usize, f64) {
+    let column_count = rows
+        .iter()
+        .map(|row| row.cells.len())
+        .max()
+        .unwrap_or(0)
+        .max(alignments.len());
+    if column_count == 0 || rows.is_empty() {
+        return (String::new(), start_id, 0.0);
+    }
+
+    let cell_padding = 6.0;
+    let column_width = w / column_count as f64;
+    let mut id = start_id;
+    let mut current_y = y;
+    let mut xml = String::new();
+
+    for row in rows {
+        let row_height = row
+            .cells
+            .iter()
+            .map(|cell| {
+                estimate_text_height(
+                    cell,
+                    column_width - cell_padding * 2.0,
+                    style.font_size,
+                    style.line_spacing,
+                ) + cell_padding * 2.0
+            })
+            .fold(
+                style.font_size * style.line_spacing + cell_padding * 2.0,
+                f64::max,
+            );
+
+        for column_index in 0..column_count {
+            let cell = row.cells.get(column_index).map_or(&[][..], Vec::as_slice);
+            let alignment = alignments
+                .get(column_index)
+                .copied()
+                .unwrap_or(TableAlignment::Default);
+            xml.push_str(&table_cell_shape(
+                id,
+                x + column_width * column_index as f64,
+                current_y,
+                column_width,
+                row_height,
+                cell,
+                style,
+                alignment,
+                row.is_header,
+            ));
+            id += 1;
+        }
+
+        current_y += row_height;
+    }
+
+    (xml, id, current_y - y)
+}
+
+fn table_cell_shape(
+    id: usize,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    inlines: &[Inline],
+    style: &TextStyle,
+    alignment: TableAlignment,
+    is_header: bool,
+) -> String {
+    let fill = if is_header { "#eef1f5" } else { "#ffffff" };
+    let mut text_style = style.clone();
+    text_style.bold = is_header || style.bold;
+    let paragraph_props = match alignment {
+        TableAlignment::Center => r#"<a:pPr algn="ctr"/>"#,
+        TableAlignment::Right => r#"<a:pPr algn="r"/>"#,
+        TableAlignment::Default | TableAlignment::Left => "",
+    };
+
+    format!(
+        r#"<p:sp>
+  <p:nvSpPr><p:cNvPr id="{id}" name="Table Cell {id}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+  <p:spPr><a:xfrm><a:off x="{}" y="{}"/><a:ext cx="{}" cy="{}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="{}"/></a:solidFill><a:ln w="6350"><a:solidFill><a:srgbClr val="C9CDD3"/></a:solidFill></a:ln></p:spPr>
+  <p:txBody><a:bodyPr wrap="square" lIns="{}" tIns="{}" rIns="{}" bIns="{}"/><a:lstStyle/><a:p>{paragraph_props}{}</a:p></p:txBody>
+</p:sp>"#,
+        emu(x),
+        emu(y),
+        emu(w),
+        emu(h),
+        color(fill),
+        emu(6.0),
+        emu(4.0),
+        emu(6.0),
+        emu(4.0),
+        runs(inlines, &text_style, None, false, false)
     )
 }
 
@@ -881,6 +1002,34 @@ mod tests {
             &mut archive,
             "[Content_Types].xml",
             r#"PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml""#,
+        );
+
+        let _ = fs::remove_file(out);
+    }
+
+    #[test]
+    fn writes_table_cells_as_shapes() {
+        let out = temp_pptx_path();
+        let presentation = parse_markdown(
+            "| Name | Count |\n| :--- | ---: |\n| A | 1 |",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+        write_pptx(&presentation, &Style::default(), &out).unwrap();
+
+        let file = File::open(&out).unwrap();
+        let mut archive = ZipArchive::new(file).unwrap();
+        assert_contains(&mut archive, "ppt/slides/slide1.xml", "Table Cell");
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            r#"<a:pPr algn="r"/>"#,
+        );
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            r#"<a:solidFill><a:srgbClr val="EEF1F5"/></a:solidFill>"#,
         );
 
         let _ = fs::remove_file(out);

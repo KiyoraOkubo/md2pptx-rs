@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::{
     error::{Error, Result},
-    model::{Block, Inline, Presentation, Slide},
+    model::{Block, Inline, Presentation, Slide, TableAlignment, TableRow},
     style::MathRenderer,
 };
 
@@ -127,7 +127,8 @@ fn parse_markdown_segment(
     title: &mut Option<Vec<Inline>>,
     blocks: &mut Vec<Block>,
 ) -> Result<()> {
-    let mut parser = Parser::new_ext(markdown, Options::ENABLE_STRIKETHROUGH).peekable();
+    let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
+    let mut parser = Parser::new_ext(markdown, options).peekable();
 
     while let Some(event) = parser.next() {
         match event {
@@ -163,6 +164,14 @@ fn parse_markdown_segment(
                 blocks.push(collect_list(
                     &mut parser,
                     start.is_some(),
+                    base_dir,
+                    math_renderer,
+                )?);
+            }
+            Event::Start(Tag::Table(alignments)) => {
+                blocks.push(collect_table(
+                    &mut parser,
+                    alignments,
                     base_dir,
                     math_renderer,
                 )?);
@@ -221,6 +230,95 @@ fn parse_markdown_segment(
     }
 
     Ok(())
+}
+
+fn collect_table<'a, I>(
+    parser: &mut I,
+    alignments: Vec<Alignment>,
+    base_dir: &Path,
+    math_renderer: MathRenderer,
+) -> Result<Block>
+where
+    I: Iterator<Item = Event<'a>>,
+{
+    let mut rows = Vec::new();
+
+    while let Some(event) = parser.next() {
+        match event {
+            Event::Start(Tag::TableHead) => {
+                rows.push(collect_table_head(parser, base_dir, math_renderer)?);
+            }
+            Event::Start(Tag::TableRow) => {
+                rows.push(collect_table_row(parser, false, base_dir, math_renderer)?);
+            }
+            Event::End(TagEnd::Table) => break,
+            _ => {}
+        }
+    }
+
+    Ok(Block::Table {
+        alignments: alignments.into_iter().map(table_alignment).collect(),
+        rows,
+    })
+}
+
+fn collect_table_head<'a, I>(
+    parser: &mut I,
+    base_dir: &Path,
+    math_renderer: MathRenderer,
+) -> Result<TableRow>
+where
+    I: Iterator<Item = Event<'a>>,
+{
+    let mut cells = Vec::new();
+    while let Some(event) = parser.next() {
+        match event {
+            Event::Start(Tag::TableCell) => {
+                cells.push(
+                    collect_inlines(parser, TagEnd::TableCell, base_dir, math_renderer)?.inlines,
+                );
+            }
+            Event::End(TagEnd::TableHead) => break,
+            _ => {}
+        }
+    }
+    Ok(TableRow {
+        cells,
+        is_header: true,
+    })
+}
+
+fn collect_table_row<'a, I>(
+    parser: &mut I,
+    is_header: bool,
+    base_dir: &Path,
+    math_renderer: MathRenderer,
+) -> Result<TableRow>
+where
+    I: Iterator<Item = Event<'a>>,
+{
+    let mut cells = Vec::new();
+    while let Some(event) = parser.next() {
+        match event {
+            Event::Start(Tag::TableCell) => {
+                cells.push(
+                    collect_inlines(parser, TagEnd::TableCell, base_dir, math_renderer)?.inlines,
+                );
+            }
+            Event::End(TagEnd::TableRow) => break,
+            _ => {}
+        }
+    }
+    Ok(TableRow { cells, is_header })
+}
+
+fn table_alignment(alignment: Alignment) -> TableAlignment {
+    match alignment {
+        Alignment::None => TableAlignment::Default,
+        Alignment::Left => TableAlignment::Left,
+        Alignment::Center => TableAlignment::Center,
+        Alignment::Right => TableAlignment::Right,
+    }
 }
 
 fn collect_list<'a, I>(
@@ -430,6 +528,46 @@ mod tests {
         assert_eq!(
             presentation.slides[0].blocks[0],
             Block::MathBlock("x = 1\n".into())
+        );
+    }
+
+    #[test]
+    fn parses_markdown_table() {
+        let presentation = parse_markdown(
+            "| Name | Count |\n| :--- | ---: |\n| A | 1 |\n| B | 2 |",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+
+        assert_eq!(
+            presentation.slides[0].blocks[0],
+            Block::Table {
+                alignments: vec![TableAlignment::Left, TableAlignment::Right],
+                rows: vec![
+                    TableRow {
+                        is_header: true,
+                        cells: vec![
+                            vec![Inline::Text("Name".into())],
+                            vec![Inline::Text("Count".into())],
+                        ],
+                    },
+                    TableRow {
+                        is_header: false,
+                        cells: vec![
+                            vec![Inline::Text("A".into())],
+                            vec![Inline::Text("1".into())],
+                        ],
+                    },
+                    TableRow {
+                        is_header: false,
+                        cells: vec![
+                            vec![Inline::Text("B".into())],
+                            vec![Inline::Text("2".into())],
+                        ],
+                    },
+                ],
+            }
         );
     }
 }

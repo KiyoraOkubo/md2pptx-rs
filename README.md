@@ -40,6 +40,7 @@ Supported content:
 - Inline math as literal text
 - Display math as literal text boxes
 - Block quotes
+- Markdown tables
 - PNG, JPG, and JPEG images
 
 Image paths are resolved relative to the Markdown file.
@@ -94,6 +95,7 @@ Only `none` and `literal` are implemented. `literal` emits inline math with inli
 - Overflow is reported as a warning, not an error.
 - Code blocks do not have syntax highlighting.
 - Inline code does not draw a separate background shape yet.
+- Tables are rendered as positioned shapes, not PowerPoint-native editable tables.
 - Images currently use a simple fixed sizing strategy.
 - Animations, transitions, speaker notes, and complex layouts are not implemented.
 
