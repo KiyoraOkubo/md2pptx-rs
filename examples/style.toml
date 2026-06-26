@@ -48,6 +48,7 @@ margin = 12
 
 [image]
 max_width = "100%"
+align = "left"
 margin = 16
 
 [math]

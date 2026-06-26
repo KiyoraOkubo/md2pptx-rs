@@ -139,6 +139,11 @@ fn parse_markdown_segment(
                 // stay in the body so the slide keeps all author content.
                 if level == HeadingLevel::H1 && title.is_none() {
                     *title = Some(collected.inlines);
+                } else if let Some(level) = body_heading_level(level) {
+                    blocks.push(Block::Heading {
+                        level,
+                        inlines: collected.inlines,
+                    });
                 } else {
                     blocks.push(Block::Paragraph(collected.inlines));
                 }
@@ -230,6 +235,17 @@ fn parse_markdown_segment(
     }
 
     Ok(())
+}
+
+fn body_heading_level(level: HeadingLevel) -> Option<u8> {
+    match level {
+        HeadingLevel::H2 => Some(2),
+        HeadingLevel::H3 => Some(3),
+        HeadingLevel::H4 => Some(4),
+        HeadingLevel::H5 => Some(5),
+        HeadingLevel::H6 => Some(6),
+        HeadingLevel::H1 => None,
+    }
 }
 
 fn collect_table<'a, I>(
@@ -568,6 +584,31 @@ mod tests {
                     },
                 ],
             }
+        );
+    }
+
+    #[test]
+    fn parses_body_headings_with_levels() {
+        let presentation = parse_markdown(
+            "# Title\n\n## Section\n\n### Detail\n\n# Extra",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+
+        assert_eq!(
+            presentation.slides[0].blocks,
+            vec![
+                Block::Heading {
+                    level: 2,
+                    inlines: vec![Inline::Text("Section".into())],
+                },
+                Block::Heading {
+                    level: 3,
+                    inlines: vec![Inline::Text("Detail".into())],
+                },
+                Block::Paragraph(vec![Inline::Text("Extra".into())]),
+            ]
         );
     }
 }

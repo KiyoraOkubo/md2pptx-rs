@@ -16,6 +16,10 @@ pub struct Slide {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Paragraph(Vec<Inline>),
+    Heading {
+        level: u8,
+        inlines: Vec<Inline>,
+    },
     List {
         ordered: bool,
         items: Vec<Vec<Inline>>,

@@ -69,6 +69,11 @@ Supported sections:
 
 - `slide`
 - `title`
+- `heading_2`
+- `heading_3`
+- `heading_4`
+- `heading_5`
+- `heading_6`
 - `body`
 - `list`
 - `code_inline`
@@ -78,6 +83,7 @@ Supported sections:
 - `math`
 
 Numeric style values are interpreted as points. `slide.size` currently supports `"16:9"` and `"4:3"`.
+Images can be aligned with `image.align = "left"`, `"center"`, or `"right"`.
 
 Math rendering is configured with:
 

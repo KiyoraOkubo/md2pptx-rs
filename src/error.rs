@@ -16,6 +16,9 @@ pub enum Error {
     #[error("unsupported feature: {0}")]
     UnsupportedFeature(&'static str),
 
+    #[error("invalid style value: {0}")]
+    InvalidStyle(String),
+
     #[error("missing image file: {0}")]
     MissingImage(PathBuf),
 

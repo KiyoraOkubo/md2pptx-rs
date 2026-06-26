@@ -9,7 +9,7 @@ use zip::{ZipWriter, write::SimpleFileOptions};
 use crate::{
     error::{Error, Result},
     model::{Block, Inline, Presentation, Slide, TableAlignment},
-    style::{BoxStyle, ListStyle, QuoteStyle, Style, TextStyle},
+    style::{BoxStyle, ImageAlign, ListStyle, QuoteStyle, Style, TextStyle},
 };
 
 const EMU_PER_PT: f64 = 12_700.0;
@@ -260,6 +260,29 @@ fn render_slide(
                 shape_id += 1;
                 y += height + style.body.margin_bottom;
             }
+            Block::Heading { level, inlines } => {
+                let heading_style = heading_text_style(style, *level);
+                let height = estimate_text_height(
+                    inlines,
+                    content_w,
+                    heading_style.font_size,
+                    heading_style.line_spacing,
+                );
+                shapes.push_str(&text_box(
+                    shape_id,
+                    padding + heading_style.margin,
+                    y,
+                    content_w - heading_style.margin * 2.0,
+                    height,
+                    inlines,
+                    heading_style,
+                    Some(&style.code_inline),
+                    false,
+                    false,
+                ));
+                shape_id += 1;
+                y += height + heading_style.margin_bottom;
+            }
             Block::List { ordered, items } => {
                 for (item_index, item) in items.iter().enumerate() {
                     let mut item_inlines = Vec::new();
@@ -360,9 +383,10 @@ fn render_slide(
                         &style.image.max_width,
                         media_file.dimensions,
                     );
+                    let x = image_x(padding, content_w, width, style.image.align);
                     shapes.push_str(&image_shape(
                         shape_id,
-                        padding,
+                        x,
                         y,
                         width,
                         height,
@@ -401,6 +425,25 @@ fn render_slide(
         color(&style.slide.background),
         shapes
     )
+}
+
+fn heading_text_style(style: &Style, level: u8) -> &TextStyle {
+    match level {
+        2 => &style.heading_2,
+        3 => &style.heading_3,
+        4 => &style.heading_4,
+        5 => &style.heading_5,
+        6 => &style.heading_6,
+        _ => &style.body,
+    }
+}
+
+fn image_x(content_x: f64, content_w: f64, image_w: f64, align: ImageAlign) -> f64 {
+    match align {
+        ImageAlign::Left => content_x,
+        ImageAlign::Center => content_x + (content_w - image_w) / 2.0,
+        ImageAlign::Right => content_x + content_w - image_w,
+    }
 }
 
 fn table_shapes(
@@ -1036,6 +1079,32 @@ mod tests {
     }
 
     #[test]
+    fn writes_body_headings_with_heading_style() {
+        let out = temp_pptx_path();
+        let presentation = parse_markdown(
+            "# Title\n\n## Section",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+        let mut style = Style::default();
+        style.heading_2.font_size = 30.0;
+        style.heading_2.color = "#123456".into();
+        write_pptx(&presentation, &style, &out).unwrap();
+
+        let file = File::open(&out).unwrap();
+        let mut archive = ZipArchive::new(file).unwrap();
+        assert_contains(&mut archive, "ppt/slides/slide1.xml", r#"sz="3000""#);
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            r#"<a:srgbClr val="123456"/>"#,
+        );
+
+        let _ = fs::remove_file(out);
+    }
+
+    #[test]
     fn writes_image_media_relationship_and_aspect_size() {
         let dir = temp_test_dir();
         fs::create_dir_all(&dir).unwrap();
@@ -1064,6 +1133,31 @@ mod tests {
             &mut archive,
             "ppt/slides/slide1.xml",
             r#"<a:ext cx="11176000" cy="5588000"/>"#,
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn writes_center_aligned_image() {
+        let dir = temp_test_dir();
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("chart.png"), png_header_with_dimensions(320, 160)).unwrap();
+
+        let out = dir.join("out.pptx");
+        let presentation =
+            parse_markdown("![chart](chart.png)", &dir, MathRenderer::Literal).unwrap();
+        let mut style = Style::default();
+        style.image.max_width = "50%".into();
+        style.image.align = ImageAlign::Center;
+        write_pptx(&presentation, &style, &out).unwrap();
+
+        let file = File::open(&out).unwrap();
+        let mut archive = ZipArchive::new(file).unwrap();
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            r#"<a:off x="3302000" y="508000"/>"#,
         );
 
         let _ = fs::remove_dir_all(dir);
