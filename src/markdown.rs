@@ -4,7 +4,7 @@ use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Par
 
 use crate::{
     error::{Error, Result},
-    model::{Block, Inline, Presentation, Slide, TableAlignment, TableRow},
+    model::{Block, Inline, ListBlock, ListItem, Presentation, Slide, TableAlignment, TableRow},
     style::MathRenderer,
 };
 
@@ -166,12 +166,12 @@ fn parse_markdown_segment(
                 }
             }
             Event::Start(Tag::List(start)) => {
-                blocks.push(collect_list(
+                blocks.push(Block::List(collect_list(
                     &mut parser,
                     start.is_some(),
                     base_dir,
                     math_renderer,
-                )?);
+                )?));
             }
             Event::Start(Tag::Table(alignments)) => {
                 blocks.push(collect_table(
@@ -342,7 +342,7 @@ fn collect_list<'a, I>(
     ordered: bool,
     base_dir: &Path,
     math_renderer: MathRenderer,
-) -> Result<Block>
+) -> Result<ListBlock>
 where
     I: Iterator<Item = Event<'a>>,
 {
@@ -350,13 +350,63 @@ where
     while let Some(event) = parser.next() {
         match event {
             Event::Start(Tag::Item) => {
-                items.push(collect_inlines(parser, TagEnd::Item, base_dir, math_renderer)?.inlines);
+                items.push(collect_list_item(parser, base_dir, math_renderer)?);
             }
             Event::End(TagEnd::List(_)) => break,
             _ => {}
         }
     }
-    Ok(Block::List { ordered, items })
+    Ok(ListBlock { ordered, items })
+}
+
+fn collect_list_item<'a, I>(
+    parser: &mut I,
+    base_dir: &Path,
+    math_renderer: MathRenderer,
+) -> Result<ListItem>
+where
+    I: Iterator<Item = Event<'a>>,
+{
+    let mut inlines = Vec::new();
+    let mut children = Vec::new();
+
+    while let Some(event) = parser.next() {
+        match event {
+            Event::End(TagEnd::Item) => break,
+            Event::Start(Tag::Paragraph) => {
+                let collected =
+                    collect_inlines(parser, TagEnd::Paragraph, base_dir, math_renderer)?;
+                append_item_inlines(&mut inlines, collected.inlines);
+            }
+            Event::Start(Tag::List(start)) => {
+                children.push(collect_list(
+                    parser,
+                    start.is_some(),
+                    base_dir,
+                    math_renderer,
+                )?);
+            }
+            Event::Text(value) => {
+                append_item_inlines(&mut inlines, vec![Inline::Text(value.to_string())]);
+            }
+            Event::Code(value) => {
+                append_item_inlines(&mut inlines, vec![Inline::Code(value.to_string())]);
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                append_item_inlines(&mut inlines, vec![Inline::Text("\n".into())]);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(ListItem { inlines, children })
+}
+
+fn append_item_inlines(target: &mut Vec<Inline>, mut inlines: Vec<Inline>) {
+    if !target.is_empty() && !inlines.is_empty() {
+        target.push(Inline::Text("\n".into()));
+    }
+    target.append(&mut inlines);
 }
 
 fn collect_inlines<'a, I>(
@@ -584,6 +634,39 @@ mod tests {
                     },
                 ],
             }
+        );
+    }
+
+    #[test]
+    fn parses_nested_lists() {
+        let presentation = parse_markdown(
+            "- Parent\n  1. Child\n     - Grandchild",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+
+        assert_eq!(
+            presentation.slides[0].blocks[0],
+            Block::List(ListBlock {
+                ordered: false,
+                items: vec![ListItem {
+                    inlines: vec![Inline::Text("Parent".into())],
+                    children: vec![ListBlock {
+                        ordered: true,
+                        items: vec![ListItem {
+                            inlines: vec![Inline::Text("Child".into())],
+                            children: vec![ListBlock {
+                                ordered: false,
+                                items: vec![ListItem {
+                                    inlines: vec![Inline::Text("Grandchild".into())],
+                                    children: vec![],
+                                }],
+                            }],
+                        }],
+                    }],
+                }],
+            })
         );
     }
 

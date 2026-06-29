@@ -33,6 +33,7 @@ Supported content:
 - Paragraphs
 - Unordered lists
 - Ordered lists
+- Nested lists up to three levels
 - Bold
 - Italic
 - Inline code

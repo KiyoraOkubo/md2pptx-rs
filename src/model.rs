@@ -20,10 +20,7 @@ pub enum Block {
         level: u8,
         inlines: Vec<Inline>,
     },
-    List {
-        ordered: bool,
-        items: Vec<Vec<Inline>>,
-    },
+    List(ListBlock),
     CodeBlock {
         language: Option<String>,
         code: String,
@@ -38,6 +35,18 @@ pub enum Block {
         path: PathBuf,
         alt: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListBlock {
+    pub ordered: bool,
+    pub items: Vec<ListItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListItem {
+    pub inlines: Vec<Inline>,
+    pub children: Vec<ListBlock>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

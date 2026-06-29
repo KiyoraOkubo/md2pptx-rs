@@ -8,7 +8,7 @@ use zip::{ZipWriter, write::SimpleFileOptions};
 
 use crate::{
     error::{Error, Result},
-    model::{Block, Inline, Presentation, Slide, TableAlignment},
+    model::{Block, Inline, ListBlock, Presentation, Slide, TableAlignment},
     style::{BoxStyle, ImageAlign, ListStyle, QuoteStyle, Style, TextStyle},
 };
 
@@ -283,34 +283,19 @@ fn render_slide(
                 shape_id += 1;
                 y += height + heading_style.margin_bottom;
             }
-            Block::List { ordered, items } => {
-                for (item_index, item) in items.iter().enumerate() {
-                    let mut item_inlines = Vec::new();
-                    let marker = if *ordered {
-                        format!("{}. ", item_index + 1)
-                    } else {
-                        "- ".to_string()
-                    };
-                    item_inlines.push(Inline::Text(marker));
-                    item_inlines.extend(item.clone());
-                    let height = estimate_text_height(
-                        &item_inlines,
-                        content_w - style.list.indent,
-                        style.list.font_size,
-                        style.list.line_spacing,
-                    );
-                    shapes.push_str(&list_text_box(
-                        shape_id,
-                        padding + style.list.margin + style.list.indent,
-                        y,
-                        content_w - style.list.margin * 2.0 - style.list.indent,
-                        height,
-                        &item_inlines,
-                        &style.list,
-                    ));
-                    shape_id += 1;
-                    y += height + style.list.margin_bottom;
-                }
+            Block::List(list) => {
+                render_list_block(
+                    list,
+                    1,
+                    &mut shape_id,
+                    &mut y,
+                    padding,
+                    content_w,
+                    &style.list,
+                    &mut shapes,
+                    slide_number,
+                    warnings,
+                );
             }
             Block::CodeBlock { code, .. } => {
                 let inlines = vec![Inline::Text(code.clone())];
@@ -435,6 +420,71 @@ fn heading_text_style(style: &Style, level: u8) -> &TextStyle {
         5 => &style.heading_5,
         6 => &style.heading_6,
         _ => &style.body,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_list_block(
+    list: &ListBlock,
+    level: usize,
+    shape_id: &mut usize,
+    y: &mut f64,
+    padding: f64,
+    content_w: f64,
+    style: &ListStyle,
+    shapes: &mut String,
+    slide_number: usize,
+    warnings: &mut Vec<String>,
+) {
+    let effective_level = level.min(3);
+    if level > 3 {
+        warnings.push(format!(
+            "slide {slide_number} list nesting level {level} was clamped to level 3"
+        ));
+    }
+
+    for (item_index, item) in list.items.iter().enumerate() {
+        let marker = if list.ordered {
+            format!("{}. ", item_index + 1)
+        } else {
+            "- ".to_string()
+        };
+        let mut item_inlines = vec![Inline::Text(marker)];
+        item_inlines.extend(item.inlines.clone());
+
+        let indent = style.indent * effective_level as f64;
+        let height = estimate_text_height(
+            &item_inlines,
+            content_w - indent,
+            style.font_size,
+            style.line_spacing,
+        );
+        shapes.push_str(&list_text_box(
+            *shape_id,
+            padding + style.margin + indent,
+            *y,
+            content_w - style.margin * 2.0 - indent,
+            height,
+            &item_inlines,
+            style,
+        ));
+        *shape_id += 1;
+        *y += height + style.margin_bottom;
+
+        for child in &item.children {
+            render_list_block(
+                child,
+                level + 1,
+                shape_id,
+                y,
+                padding,
+                content_w,
+                style,
+                shapes,
+                slide_number,
+                warnings,
+            );
+        }
     }
 }
 
@@ -1099,6 +1149,52 @@ mod tests {
             &mut archive,
             "ppt/slides/slide1.xml",
             r#"<a:srgbClr val="123456"/>"#,
+        );
+
+        let _ = fs::remove_file(out);
+    }
+
+    #[test]
+    fn writes_nested_lists_with_indented_markers() {
+        let out = temp_pptx_path();
+        let presentation = parse_markdown(
+            "- Parent\n  1. Child",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+        write_pptx(&presentation, &Style::default(), &out).unwrap();
+
+        let file = File::open(&out).unwrap();
+        let mut archive = ZipArchive::new(file).unwrap();
+        assert_contains(&mut archive, "ppt/slides/slide1.xml", "<a:t>- </a:t>");
+        assert_contains(&mut archive, "ppt/slides/slide1.xml", "<a:t>Parent</a:t>");
+        assert_contains(&mut archive, "ppt/slides/slide1.xml", "<a:t>1. </a:t>");
+        assert_contains(&mut archive, "ppt/slides/slide1.xml", "<a:t>Child</a:t>");
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            r#"<a:off x="1219200""#,
+        );
+
+        let _ = fs::remove_file(out);
+    }
+
+    #[test]
+    fn warns_when_list_nesting_is_clamped() {
+        let out = temp_pptx_path();
+        let presentation = parse_markdown(
+            "- One\n  - Two\n    - Three\n      - Four",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+        let warnings = write_pptx(&presentation, &Style::default(), &out).unwrap();
+
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| { warning.contains("list nesting level 4 was clamped to level 3") })
         );
 
         let _ = fs::remove_file(out);
