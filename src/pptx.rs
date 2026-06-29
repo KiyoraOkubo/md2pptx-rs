@@ -756,11 +756,18 @@ fn runs(
         let font = active.map_or(&style.font_family, |value| &value.font_family);
         let size = active.map_or(style.font_size, |value| value.font_size);
         let run_color = active.map_or(&style.color, |value| &value.color);
+        let highlight = active.map_or(String::new(), |value| {
+            format!(
+                r#"<a:highlight><a:srgbClr val="{}"/></a:highlight>"#,
+                color(&value.background)
+            )
+        });
         xml.push_str(&format!(
-            r#"<a:r><a:rPr lang="en-US" sz="{}"{}{}><a:solidFill><a:srgbClr val="{}"/></a:solidFill><a:latin typeface="{}"/></a:rPr><a:t>{}</a:t></a:r>"#,
+            r#"<a:r><a:rPr lang="en-US" sz="{}"{}{}>{}<a:solidFill><a:srgbClr val="{}"/></a:solidFill><a:latin typeface="{}"/></a:rPr><a:t>{}</a:t></a:r>"#,
             (size * 100.0).round() as i64,
             if bold { r#" b="1""# } else { "" },
             if italic { r#" i="1""# } else { "" },
+            highlight,
             color(run_color),
             escape(font),
             escape(text)
@@ -1149,6 +1156,31 @@ mod tests {
             &mut archive,
             "ppt/slides/slide1.xml",
             r#"<a:srgbClr val="123456"/>"#,
+        );
+
+        let _ = fs::remove_file(out);
+    }
+
+    #[test]
+    fn writes_inline_code_highlight() {
+        let out = temp_pptx_path();
+        let presentation =
+            parse_markdown("Run `cargo test`.", Path::new("."), MathRenderer::Literal).unwrap();
+        let mut style = Style::default();
+        style.code_inline.background = "#ffeeaa".into();
+        write_pptx(&presentation, &style, &out).unwrap();
+
+        let file = File::open(&out).unwrap();
+        let mut archive = ZipArchive::new(file).unwrap();
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            r#"<a:highlight><a:srgbClr val="FFEEAA"/></a:highlight>"#,
+        );
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            "<a:t>cargo test</a:t>",
         );
 
         let _ = fs::remove_file(out);
