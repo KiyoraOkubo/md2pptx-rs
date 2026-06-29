@@ -5,6 +5,7 @@
 # Local agent handoff/instruction files.
 /AGENTS.md
 /HANDOFF.md
+/SPEC.md
 /.agents/
 /.codex/
 
