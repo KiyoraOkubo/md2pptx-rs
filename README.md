@@ -105,6 +105,10 @@ Only `none` and `literal` are implemented. `literal` emits inline math with inli
 - Images currently use a simple fixed sizing strategy.
 - Animations, transitions, speaker notes, and complex layouts are not implemented.
 
+## Diagnostics
+
+Warnings and errors are printed to stderr. Diagnostic labels are colored when the terminal supports color: `WARNING` is yellow and `ERROR` is red. When multiple warnings are emitted, the CLI prints a final warning count summary.
+
 ## Development
 
 ```powershell

@@ -456,6 +456,8 @@ dependencies = [
 name = "md2pptx"
 version = "0.1.0"
 dependencies = [
+ "anstream",
+ "anstyle",
  "clap",
  "pulldown-cmark",
  "serde",
