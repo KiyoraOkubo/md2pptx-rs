@@ -6,6 +6,15 @@ pub enum WarningKind {
     ListNestingClamped,
 }
 
+impl WarningKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::SlideOverflow => "overflow",
+            Self::ListNestingClamped => "list nesting",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Warning {
     pub kind: WarningKind,
@@ -26,9 +35,14 @@ impl Warning {
 impl std::fmt::Display for Warning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(slide_number) = self.slide_number {
-            write!(f, "slide {slide_number}: {}", self.message)
+            write!(
+                f,
+                "slide {slide_number}: {}: {}",
+                self.kind.label(),
+                self.message
+            )
         } else {
-            f.write_str(&self.message)
+            write!(f, "{}: {}", self.kind.label(), self.message)
         }
     }
 }
@@ -70,16 +84,30 @@ mod tests {
 
     #[test]
     fn formats_warning_with_slide_context() {
-        let warning = Warning::new(WarningKind::SlideOverflow, Some(3), "content overflow");
+        let warning = Warning::new(
+            WarningKind::SlideOverflow,
+            Some(3),
+            "content exceeds slide bounds by 18.4pt",
+        );
 
-        assert_eq!(warning.to_string(), "slide 3: content overflow");
+        assert_eq!(
+            warning.to_string(),
+            "slide 3: overflow: content exceeds slide bounds by 18.4pt"
+        );
     }
 
     #[test]
     fn formats_warning_without_slide_context() {
-        let warning = Warning::new(WarningKind::ListNestingClamped, None, "list clamped");
+        let warning = Warning::new(
+            WarningKind::ListNestingClamped,
+            None,
+            "level 4 was clamped to level 3",
+        );
 
-        assert_eq!(warning.to_string(), "list clamped");
+        assert_eq!(
+            warning.to_string(),
+            "list nesting: level 4 was clamped to level 3"
+        );
     }
 
     #[test]

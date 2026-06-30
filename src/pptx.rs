@@ -443,7 +443,7 @@ fn render_list_block(
         warnings.push(Warning::new(
             WarningKind::ListNestingClamped,
             Some(slide_number),
-            format!("list nesting level {level} was clamped to level 3"),
+            format!("level {level} was clamped to level 3"),
         ));
     }
 
@@ -1232,7 +1232,7 @@ mod tests {
                 && warning.slide_number == Some(1)
                 && warning
                     .to_string()
-                    .contains("list nesting level 4 was clamped to level 3")
+                    .contains("list nesting: level 4 was clamped to level 3")
         }));
 
         let _ = fs::remove_file(out);

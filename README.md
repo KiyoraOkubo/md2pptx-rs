@@ -11,7 +11,7 @@ cargo run -- examples\sample.md -o examples\sample.pptx --style examples\style.t
 The CLI expects:
 
 ```text
-md2pptx <input.md> -o <output.pptx> [--style <style.toml>]
+md2pptx <input.md> -o <output.pptx> [--style <style.toml>] [--color auto|always|never] [--quiet]
 ```
 
 ## Markdown Input
@@ -108,6 +108,14 @@ Only `none` and `literal` are implemented. `literal` emits inline math with inli
 ## Diagnostics
 
 Warnings and errors are printed to stderr. Diagnostic labels are colored when the terminal supports color: `WARNING` is yellow and `ERROR` is red. When multiple warnings are emitted, the CLI prints a final warning count summary.
+
+Use `--color auto|always|never` to control diagnostic colors. Use `--quiet` to suppress warnings; errors are still printed.
+
+Example warning:
+
+```text
+WARNING: slide 2: overflow: content exceeds slide bounds by 18.4pt
+```
 
 ## Development
 
