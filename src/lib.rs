@@ -8,9 +8,10 @@ pub mod style;
 
 use std::path::Path;
 
+use diagnostics::Warning;
 use error::Result;
 
-pub fn convert(markdown: &Path, output: &Path, style: Option<&Path>) -> Result<Vec<String>> {
+pub fn convert(markdown: &Path, output: &Path, style: Option<&Path>) -> Result<Vec<Warning>> {
     let markdown_text = std::fs::read_to_string(markdown)?;
     let style = style::Style::load(style)?;
     // Image paths in Markdown are resolved from the input file location, not

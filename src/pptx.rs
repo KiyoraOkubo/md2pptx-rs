@@ -7,6 +7,7 @@ use std::{
 use zip::{ZipWriter, write::SimpleFileOptions};
 
 use crate::{
+    diagnostics::{Warning, WarningKind},
     error::{Error, Result},
     model::{Block, Inline, ListBlock, Presentation, Slide, TableAlignment},
     style::{BoxStyle, ImageAlign, ListStyle, QuoteStyle, Style, TextStyle},
@@ -18,7 +19,7 @@ pub fn write_pptx(
     presentation: &Presentation,
     style: &Style,
     output: &Path,
-) -> Result<Vec<String>> {
+) -> Result<Vec<Warning>> {
     let file = File::create(output)?;
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default();
@@ -201,7 +202,7 @@ fn render_slide(
     style: &Style,
     slide_number: usize,
     media: &[MediaFile],
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<Warning>,
 ) -> String {
     let (slide_w, slide_h) = style.slide.size.dimensions_pt();
     let padding = style.slide.padding;
@@ -387,9 +388,10 @@ fn render_slide(
         }
 
         if y > max_y {
-            warnings.push(format!(
-                "slide {slide_number} content exceeds slide bounds by {:.1}pt",
-                y - max_y
+            warnings.push(Warning::new(
+                WarningKind::SlideOverflow,
+                Some(slide_number),
+                format!("content exceeds slide bounds by {:.1}pt", y - max_y),
             ));
         }
     }
@@ -434,12 +436,14 @@ fn render_list_block(
     style: &ListStyle,
     shapes: &mut String,
     slide_number: usize,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<Warning>,
 ) {
     let effective_level = level.min(3);
     if level > 3 {
-        warnings.push(format!(
-            "slide {slide_number} list nesting level {level} was clamped to level 3"
+        warnings.push(Warning::new(
+            WarningKind::ListNestingClamped,
+            Some(slide_number),
+            format!("list nesting level {level} was clamped to level 3"),
         ));
     }
 
@@ -1223,11 +1227,13 @@ mod tests {
         .unwrap();
         let warnings = write_pptx(&presentation, &Style::default(), &out).unwrap();
 
-        assert!(
-            warnings
-                .iter()
-                .any(|warning| { warning.contains("list nesting level 4 was clamped to level 3") })
-        );
+        assert!(warnings.iter().any(|warning| {
+            warning.kind == WarningKind::ListNestingClamped
+                && warning.slide_number == Some(1)
+                && warning
+                    .to_string()
+                    .contains("list nesting level 4 was clamped to level 3")
+        }));
 
         let _ = fs::remove_file(out);
     }

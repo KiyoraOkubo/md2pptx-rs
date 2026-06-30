@@ -1,6 +1,39 @@
 use anstyle::AnsiColor;
 
-pub fn print_warnings(warnings: &[String]) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WarningKind {
+    SlideOverflow,
+    ListNestingClamped,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Warning {
+    pub kind: WarningKind,
+    pub slide_number: Option<usize>,
+    message: String,
+}
+
+impl Warning {
+    pub fn new(kind: WarningKind, slide_number: Option<usize>, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            slide_number,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for Warning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(slide_number) = self.slide_number {
+            write!(f, "slide {slide_number}: {}", self.message)
+        } else {
+            f.write_str(&self.message)
+        }
+    }
+}
+
+pub fn print_warnings(warnings: &[Warning]) {
     for warning in warnings {
         print_warning(warning);
     }
@@ -33,7 +66,21 @@ fn warning_summary(count: usize) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::warning_summary;
+    use super::{Warning, WarningKind, warning_summary};
+
+    #[test]
+    fn formats_warning_with_slide_context() {
+        let warning = Warning::new(WarningKind::SlideOverflow, Some(3), "content overflow");
+
+        assert_eq!(warning.to_string(), "slide 3: content overflow");
+    }
+
+    #[test]
+    fn formats_warning_without_slide_context() {
+        let warning = Warning::new(WarningKind::ListNestingClamped, None, "list clamped");
+
+        assert_eq!(warning.to_string(), "list clamped");
+    }
 
     #[test]
     fn omits_warning_summary_for_zero_or_one_warning() {
