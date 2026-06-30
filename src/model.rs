@@ -30,11 +30,22 @@ pub enum Block {
         alignments: Vec<TableAlignment>,
         rows: Vec<TableRow>,
     },
+    Columns(ColumnsBlock),
     Quote(Vec<Inline>),
     Image {
         path: PathBuf,
         alt: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColumnsBlock {
+    pub columns: Vec<ColumnBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColumnBlock {
+    pub blocks: Vec<Block>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -25,3 +25,24 @@ fn main() {
 1. 画像は Markdown ファイルからの相対パスで解決
 2. Mermaid と数式は未対応エラー
 3. 複雑なレイアウトは今後追加
+
+---
+
+# Two Columns
+
+::: columns
+::: column
+## Left
+
+- 箇条書き
+- 通常のMarkdown
+:::
+::: column
+## Right
+
+| 項目 | 値 |
+| --- | ---: |
+| A | 10 |
+| B | 20 |
+:::
+:::

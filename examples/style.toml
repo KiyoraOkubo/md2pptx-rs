@@ -51,5 +51,8 @@ max_width = "100%"
 align = "left"
 margin = 16
 
+[columns]
+gap = 24
+
 [math]
 renderer = "literal"

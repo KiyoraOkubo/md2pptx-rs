@@ -4,7 +4,10 @@ use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Par
 
 use crate::{
     error::{Error, Result},
-    model::{Block, Inline, ListBlock, ListItem, Presentation, Slide, TableAlignment, TableRow},
+    model::{
+        Block, ColumnBlock, ColumnsBlock, Inline, ListBlock, ListItem, Presentation, Slide,
+        TableAlignment, TableRow,
+    },
     style::MathRenderer,
 };
 
@@ -58,12 +61,59 @@ fn split_slides(markdown: &str) -> Vec<String> {
 fn parse_slide(markdown: &str, base_dir: &Path, math_renderer: MathRenderer) -> Result<Slide> {
     let mut title = None;
     let mut blocks = Vec::new();
+    parse_source_markdown(
+        markdown,
+        base_dir,
+        math_renderer,
+        Some(&mut title),
+        &mut blocks,
+    )?;
 
+    Ok(Slide { title, blocks })
+}
+
+fn parse_source_markdown(
+    markdown: &str,
+    base_dir: &Path,
+    math_renderer: MathRenderer,
+    mut title: Option<&mut Option<Vec<Inline>>>,
+    blocks: &mut Vec<Block>,
+) -> Result<()> {
+    for source_block in parse_source_blocks(markdown)? {
+        match source_block {
+            SourceBlock::Markdown(markdown) => {
+                parse_markdown_source(
+                    &markdown,
+                    base_dir,
+                    math_renderer,
+                    title.as_deref_mut(),
+                    blocks,
+                )?;
+            }
+            SourceBlock::Directive(directive) => {
+                blocks.push(convert_directive(directive, base_dir, math_renderer)?);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_markdown_source(
+    markdown: &str,
+    base_dir: &Path,
+    math_renderer: MathRenderer,
+    mut title: Option<&mut Option<Vec<Inline>>>,
+    blocks: &mut Vec<Block>,
+) -> Result<()> {
     for segment in split_display_math(markdown, math_renderer)? {
         match segment {
-            SlideSegment::Markdown(markdown) => {
-                parse_markdown_segment(&markdown, base_dir, math_renderer, &mut title, &mut blocks)?
-            }
+            SlideSegment::Markdown(markdown) => parse_markdown_segment(
+                &markdown,
+                base_dir,
+                math_renderer,
+                title.as_deref_mut(),
+                blocks,
+            )?,
             SlideSegment::MathBlock(source) => {
                 if math_renderer == MathRenderer::None {
                     return Err(Error::UnsupportedFeature("math"));
@@ -72,8 +122,264 @@ fn parse_slide(markdown: &str, base_dir: &Path, math_renderer: MathRenderer) -> 
             }
         }
     }
+    Ok(())
+}
 
-    Ok(Slide { title, blocks })
+#[derive(Debug, PartialEq)]
+enum SourceBlock {
+    Markdown(String),
+    Directive(DirectiveBlock),
+}
+
+#[derive(Debug, PartialEq)]
+struct DirectiveBlock {
+    name: String,
+    attrs: Vec<(String, String)>,
+    children: Vec<SourceBlock>,
+}
+
+fn parse_source_blocks(markdown: &str) -> Result<Vec<SourceBlock>> {
+    let lines = markdown.lines().collect::<Vec<_>>();
+    let mut index = 0;
+    parse_source_blocks_until(&lines, &mut index, false)
+}
+
+fn parse_source_blocks_until(
+    lines: &[&str],
+    index: &mut usize,
+    allow_close: bool,
+) -> Result<Vec<SourceBlock>> {
+    let mut blocks = Vec::new();
+    let mut markdown_lines = Vec::new();
+    let mut code_fence: Option<String> = None;
+
+    while *index < lines.len() {
+        let line = lines[*index];
+        let trimmed = line.trim();
+
+        if let Some(fence) = &code_fence {
+            markdown_lines.push(line.to_string());
+            if closes_code_fence(trimmed, fence) {
+                code_fence = None;
+            }
+            *index += 1;
+            continue;
+        }
+
+        if let Some(fence) = opens_code_fence(trimmed) {
+            markdown_lines.push(line.to_string());
+            code_fence = Some(fence);
+            *index += 1;
+            continue;
+        }
+
+        if trimmed == ":::" {
+            if allow_close {
+                push_markdown_block(&mut blocks, &mut markdown_lines);
+                *index += 1;
+                return Ok(blocks);
+            }
+            return Err(Error::InvalidMarkdown(
+                "unexpected directive closing fence".into(),
+            ));
+        }
+
+        if let Some((name, attrs)) = parse_directive_open(trimmed)? {
+            push_markdown_block(&mut blocks, &mut markdown_lines);
+            *index += 1;
+            let children = parse_source_blocks_until(lines, index, true)?;
+            blocks.push(SourceBlock::Directive(DirectiveBlock {
+                name,
+                attrs,
+                children,
+            }));
+            continue;
+        }
+
+        markdown_lines.push(line.to_string());
+        *index += 1;
+    }
+
+    if allow_close {
+        return Err(Error::InvalidMarkdown(
+            "unterminated directive block".into(),
+        ));
+    }
+
+    push_markdown_block(&mut blocks, &mut markdown_lines);
+    Ok(blocks)
+}
+
+fn push_markdown_block(blocks: &mut Vec<SourceBlock>, markdown_lines: &mut Vec<String>) {
+    if markdown_lines.iter().any(|line| !line.trim().is_empty()) {
+        blocks.push(SourceBlock::Markdown(markdown_lines.join("\n")));
+    }
+    markdown_lines.clear();
+}
+
+fn opens_code_fence(trimmed: &str) -> Option<String> {
+    for marker in ["```", "~~~"] {
+        if trimmed.starts_with(marker) {
+            let count = trimmed
+                .chars()
+                .take_while(|character| *character == marker.chars().next().unwrap())
+                .count();
+            if count >= 3 {
+                return Some(marker.chars().next().unwrap().to_string().repeat(count));
+            }
+        }
+    }
+    None
+}
+
+fn closes_code_fence(trimmed: &str, fence: &str) -> bool {
+    trimmed.starts_with(fence)
+}
+
+fn parse_directive_open(trimmed: &str) -> Result<Option<(String, Vec<(String, String)>)>> {
+    let Some(rest) = trimmed.strip_prefix(":::") else {
+        return Ok(None);
+    };
+    if rest.is_empty() || rest.starts_with(':') || !rest.starts_with(char::is_whitespace) {
+        return Ok(None);
+    }
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return Ok(None);
+    }
+    let (name, attr_source) = split_directive_name(rest);
+    if !name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return Err(Error::InvalidMarkdown(format!(
+            "invalid directive name: {name}"
+        )));
+    }
+    let attrs = parse_directive_attrs(attr_source)?;
+    Ok(Some((name.to_string(), attrs)))
+}
+
+fn split_directive_name(source: &str) -> (&str, &str) {
+    source
+        .find(char::is_whitespace)
+        .map_or((source, ""), |index| {
+            (&source[..index], source[index..].trim())
+        })
+}
+
+fn parse_directive_attrs(source: &str) -> Result<Vec<(String, String)>> {
+    let mut attrs = Vec::new();
+    let mut rest = source.trim();
+
+    while !rest.is_empty() {
+        let Some(eq_index) = rest.find('=') else {
+            return Err(Error::InvalidMarkdown(format!(
+                "invalid directive attribute: {rest}"
+            )));
+        };
+        let key = rest[..eq_index].trim();
+        if key.is_empty()
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        {
+            return Err(Error::InvalidMarkdown(format!(
+                "invalid directive attribute: {key}"
+            )));
+        }
+        rest = rest[eq_index + 1..].trim_start();
+
+        let (value, next_rest) = if let Some(quoted) = rest.strip_prefix('"') {
+            let Some(end_quote) = quoted.find('"') else {
+                return Err(Error::InvalidMarkdown(format!(
+                    "unterminated quoted value for directive attribute: {key}"
+                )));
+            };
+            (&quoted[..end_quote], quoted[end_quote + 1..].trim_start())
+        } else {
+            let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            (&rest[..end], rest[end..].trim_start())
+        };
+
+        attrs.push((key.to_string(), value.to_string()));
+        rest = next_rest;
+    }
+
+    Ok(attrs)
+}
+
+fn convert_directive(
+    directive: DirectiveBlock,
+    base_dir: &Path,
+    math_renderer: MathRenderer,
+) -> Result<Block> {
+    match directive.name.as_str() {
+        "columns" => convert_columns_directive(directive, base_dir, math_renderer),
+        "column" => Err(Error::InvalidMarkdown(
+            "column directive must be inside columns".into(),
+        )),
+        _ => Err(Error::InvalidMarkdown(format!(
+            "unknown directive: {}",
+            directive.name
+        ))),
+    }
+}
+
+fn convert_columns_directive(
+    directive: DirectiveBlock,
+    base_dir: &Path,
+    math_renderer: MathRenderer,
+) -> Result<Block> {
+    reject_attrs("columns", &directive.attrs)?;
+    let mut columns = Vec::new();
+    for child in directive.children {
+        let SourceBlock::Directive(column) = child else {
+            return Err(Error::InvalidMarkdown(
+                "columns directive may contain only column directives".into(),
+            ));
+        };
+        if column.name != "column" {
+            return Err(Error::InvalidMarkdown(
+                "columns directive may contain only column directives".into(),
+            ));
+        }
+        reject_attrs("column", &column.attrs)?;
+        let mut blocks = Vec::new();
+        for child in column.children {
+            match child {
+                SourceBlock::Markdown(markdown) => {
+                    parse_source_markdown(&markdown, base_dir, math_renderer, None, &mut blocks)?;
+                }
+                SourceBlock::Directive(nested) if nested.name == "columns" => {
+                    return Err(Error::InvalidMarkdown(
+                        "nested columns directives are not supported".into(),
+                    ));
+                }
+                SourceBlock::Directive(nested) => {
+                    blocks.push(convert_directive(nested, base_dir, math_renderer)?);
+                }
+            }
+        }
+        columns.push(ColumnBlock { blocks });
+    }
+
+    if columns.len() != 2 {
+        return Err(Error::InvalidMarkdown(
+            "columns directive must contain exactly two column directives".into(),
+        ));
+    }
+
+    Ok(Block::Columns(ColumnsBlock { columns }))
+}
+
+fn reject_attrs(name: &str, attrs: &[(String, String)]) -> Result<()> {
+    if let Some((key, _)) = attrs.first() {
+        return Err(Error::InvalidMarkdown(format!(
+            "unknown attribute on {name} directive: {key}"
+        )));
+    }
+    Ok(())
 }
 
 enum SlideSegment {
@@ -124,7 +430,7 @@ fn parse_markdown_segment(
     markdown: &str,
     base_dir: &Path,
     math_renderer: MathRenderer,
-    title: &mut Option<Vec<Inline>>,
+    mut title: Option<&mut Option<Vec<Inline>>>,
     blocks: &mut Vec<Block>,
 ) -> Result<()> {
     let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
@@ -137,8 +443,12 @@ fn parse_markdown_segment(
                     collect_inlines(&mut parser, TagEnd::Heading(level), base_dir, math_renderer)?;
                 // Only the first H1 is promoted to the title. Other headings
                 // stay in the body so the slide keeps all author content.
-                if level == HeadingLevel::H1 && title.is_none() {
-                    *title = Some(collected.inlines);
+                if level == HeadingLevel::H1
+                    && title
+                        .as_ref()
+                        .is_some_and(|current_title| current_title.is_none())
+                {
+                    *title.as_deref_mut().unwrap() = Some(collected.inlines);
                 } else if let Some(level) = body_heading_level(level) {
                     blocks.push(Block::Heading {
                         level,
@@ -693,5 +1003,68 @@ mod tests {
                 Block::Paragraph(vec![Inline::Text("Extra".into())]),
             ]
         );
+    }
+
+    #[test]
+    fn parses_columns_directive() {
+        let presentation = parse_markdown(
+            "# Title\n\n::: columns\n::: column\n## Left\n\n- A\n:::\n::: column\nRight text\n:::\n:::",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+
+        assert_eq!(presentation.slides[0].blocks.len(), 1);
+        let Block::Columns(columns) = &presentation.slides[0].blocks[0] else {
+            panic!("expected columns block");
+        };
+        assert_eq!(columns.columns.len(), 2);
+        assert_eq!(
+            columns.columns[0].blocks[0],
+            Block::Heading {
+                level: 2,
+                inlines: vec![Inline::Text("Left".into())],
+            }
+        );
+        assert_eq!(
+            columns.columns[1].blocks[0],
+            Block::Paragraph(vec![Inline::Text("Right text".into())])
+        );
+    }
+
+    #[test]
+    fn rejects_columns_with_non_column_content() {
+        let err = parse_markdown(
+            "::: columns\nPlain text\n:::\n",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("columns directive"));
+    }
+
+    #[test]
+    fn rejects_unterminated_directive() {
+        let err = parse_markdown(
+            "::: columns\n::: column\nLeft",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("unterminated directive"));
+    }
+
+    #[test]
+    fn rejects_unknown_directive_attribute_after_parsing_quoted_value() {
+        let err = parse_markdown(
+            "::: columns label=\"two columns\"\n::: column\nLeft\n:::\n::: column\nRight\n:::\n:::",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("unknown attribute"));
     }
 }

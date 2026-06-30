@@ -16,6 +16,9 @@ pub enum Error {
     #[error("unsupported feature: {0}")]
     UnsupportedFeature(&'static str),
 
+    #[error("invalid Markdown: {0}")]
+    InvalidMarkdown(String),
+
     #[error("invalid style value: {0}")]
     InvalidStyle(String),
 

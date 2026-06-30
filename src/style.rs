@@ -27,6 +27,7 @@ pub struct Style {
     pub code_block: BoxStyle,
     pub quote: QuoteStyle,
     pub image: ImageStyle,
+    pub columns: ColumnsStyle,
     pub math: MathStyle,
 }
 
@@ -46,6 +47,7 @@ impl Default for Style {
             code_block: BoxStyle::default(),
             quote: QuoteStyle::default(),
             image: ImageStyle::default(),
+            columns: ColumnsStyle::default(),
             math: MathStyle::default(),
         }
     }
@@ -79,6 +81,7 @@ impl Style {
         validate_box_style("code_block", &self.code_block)?;
         validate_quote_style("quote", &self.quote)?;
         validate_image_style("image", &self.image)?;
+        validate_columns_style("columns", &self.columns)?;
         Ok(())
     }
 }
@@ -297,6 +300,18 @@ impl Default for ImageStyle {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ColumnsStyle {
+    pub gap: f64,
+}
+
+impl Default for ColumnsStyle {
+    fn default() -> Self {
+        Self { gap: 24.0 }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageAlign {
@@ -370,6 +385,10 @@ fn validate_quote_style(section: &str, style: &QuoteStyle) -> Result<()> {
 fn validate_image_style(section: &str, style: &ImageStyle) -> Result<()> {
     validate_image_max_width(&format!("{section}.max_width"), &style.max_width)?;
     validate_non_negative(&format!("{section}.margin"), style.margin)
+}
+
+fn validate_columns_style(section: &str, style: &ColumnsStyle) -> Result<()> {
+    validate_non_negative(&format!("{section}.gap"), style.gap)
 }
 
 fn validate_font_family(section: &str, value: &str) -> Result<()> {
@@ -454,6 +473,7 @@ font_size = 30
         assert_eq!(style.heading_2.font_size, 30.0);
         assert!(style.heading_2.bold);
         assert_eq!(style.body.font_size, 22.0);
+        assert_eq!(style.columns.gap, 24.0);
         assert_eq!(style.math.renderer, MathRenderer::Literal);
         style.validate().unwrap();
     }
@@ -465,6 +485,7 @@ font_size = 30
         assert_eq!(style.title.font_size, 36.0);
         assert_eq!(style.code_inline.font_size, 20.0);
         assert_eq!(style.heading_6.font_size, 19.0);
+        assert_eq!(style.columns.gap, 24.0);
         style.validate().unwrap();
     }
 
@@ -513,5 +534,14 @@ font_size = 30
             let error = style.validate().unwrap_err().to_string();
             assert!(error.contains("image.max_width"));
         }
+    }
+
+    #[test]
+    fn rejects_negative_columns_gap() {
+        let mut style = Style::default();
+        style.columns.gap = -1.0;
+
+        let error = style.validate().unwrap_err().to_string();
+        assert!(error.contains("columns.gap"));
     }
 }

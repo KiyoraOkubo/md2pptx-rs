@@ -30,12 +30,12 @@ pub fn write_pptx(
     // because those package parts must list image content types up front.
     let mut media_number = 0;
     for (slide_index, slide) in presentation.slides.iter().enumerate() {
-        for block in &slide.blocks {
-            if let Block::Image { path, .. } = block {
-                media_number += 1;
-                media.push(MediaFile::new(slide_index + 1, media_number, path)?);
-            }
-        }
+        collect_media_files(
+            &slide.blocks,
+            slide_index + 1,
+            &mut media_number,
+            &mut media,
+        )?;
     }
 
     write_file(
@@ -124,6 +124,29 @@ pub fn write_pptx(
 
     zip.finish()?;
     Ok(warnings)
+}
+
+fn collect_media_files(
+    blocks: &[Block],
+    slide_number: usize,
+    media_number: &mut usize,
+    media: &mut Vec<MediaFile>,
+) -> Result<()> {
+    for block in blocks {
+        match block {
+            Block::Image { path, .. } => {
+                *media_number += 1;
+                media.push(MediaFile::new(slide_number, *media_number, path)?);
+            }
+            Block::Columns(columns) => {
+                for column in &columns.columns {
+                    collect_media_files(&column.blocks, slide_number, media_number, media)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn write_file<W: Write + std::io::Seek>(
@@ -237,164 +260,22 @@ fn render_slide(
         y += height + style.title.margin_bottom;
     }
 
-    for block in &slide.blocks {
-        match block {
-            Block::Paragraph(inlines) => {
-                let height = estimate_text_height(
-                    inlines,
-                    content_w,
-                    style.body.font_size,
-                    style.body.line_spacing,
-                );
-                shapes.push_str(&text_box(
-                    shape_id,
-                    padding + style.body.margin,
-                    y,
-                    content_w - style.body.margin * 2.0,
-                    height,
-                    inlines,
-                    &style.body,
-                    Some(&style.code_inline),
-                    false,
-                    false,
-                ));
-                shape_id += 1;
-                y += height + style.body.margin_bottom;
-            }
-            Block::Heading { level, inlines } => {
-                let heading_style = heading_text_style(style, *level);
-                let height = estimate_text_height(
-                    inlines,
-                    content_w,
-                    heading_style.font_size,
-                    heading_style.line_spacing,
-                );
-                shapes.push_str(&text_box(
-                    shape_id,
-                    padding + heading_style.margin,
-                    y,
-                    content_w - heading_style.margin * 2.0,
-                    height,
-                    inlines,
-                    heading_style,
-                    Some(&style.code_inline),
-                    false,
-                    false,
-                ));
-                shape_id += 1;
-                y += height + heading_style.margin_bottom;
-            }
-            Block::List(list) => {
-                render_list_block(
-                    list,
-                    1,
-                    &mut shape_id,
-                    &mut y,
-                    padding,
-                    content_w,
-                    &style.list,
-                    &mut shapes,
-                    slide_number,
-                    warnings,
-                );
-            }
-            Block::CodeBlock { code, .. } => {
-                let inlines = vec![Inline::Text(code.clone())];
-                let height = estimate_code_height(code, content_w, style.code_block.font_size)
-                    + style.code_block.padding * 2.0;
-                shapes.push_str(&box_text(
-                    shape_id,
-                    padding + style.code_block.margin,
-                    y,
-                    content_w - style.code_block.margin * 2.0,
-                    height,
-                    &inlines,
-                    &style.code_block,
-                ));
-                shape_id += 1;
-                y += height + style.code_block.margin;
-            }
-            Block::MathBlock(source) => {
-                let inlines = vec![Inline::Text(source.clone())];
-                let height = estimate_code_height(source, content_w, style.code_block.font_size)
-                    + style.code_block.padding * 2.0;
-                shapes.push_str(&box_text(
-                    shape_id,
-                    padding + style.code_block.margin,
-                    y,
-                    content_w - style.code_block.margin * 2.0,
-                    height,
-                    &inlines,
-                    &style.code_block,
-                ));
-                shape_id += 1;
-                y += height + style.code_block.margin;
-            }
-            Block::Table { alignments, rows } => {
-                let (table_xml, next_shape_id, height) = table_shapes(
-                    shape_id,
-                    padding,
-                    y,
-                    content_w,
-                    alignments,
-                    rows,
-                    &style.body,
-                );
-                shapes.push_str(&table_xml);
-                shape_id = next_shape_id;
-                y += height + style.body.margin_bottom;
-            }
-            Block::Quote(inlines) => {
-                let height = estimate_text_height(inlines, content_w, style.quote.font_size, 1.2)
-                    + style.quote.padding * 2.0;
-                shapes.push_str(&quote_box(
-                    shape_id,
-                    padding + style.quote.margin,
-                    y,
-                    content_w - style.quote.margin * 2.0,
-                    height,
-                    inlines,
-                    &style.quote,
-                ));
-                shape_id += 1;
-                y += height + style.quote.margin;
-            }
-            Block::Image { alt, .. } => {
-                if let Some(media_file) = media.get(image_index) {
-                    // Images are laid out in the same vertical flow as text,
-                    // but their height is derived from intrinsic dimensions.
-                    let (width, height) = image_size(
-                        content_w,
-                        (max_y - y).max(80.0),
-                        &style.image.max_width,
-                        media_file.dimensions,
-                    );
-                    let x = image_x(padding, content_w, width, style.image.align);
-                    shapes.push_str(&image_shape(
-                        shape_id,
-                        x,
-                        y,
-                        width,
-                        height,
-                        image_index + 1,
-                        alt,
-                    ));
-                    shape_id += 1;
-                    image_index += 1;
-                    y += height + style.image.margin;
-                    let _ = &media_file.path;
-                }
-            }
-        }
-
-        if y > max_y {
-            warnings.push(Warning::new(
-                WarningKind::SlideOverflow,
-                Some(slide_number),
-                format!("content exceeds slide bounds by {:.1}pt", y - max_y),
-            ));
-        }
-    }
+    render_blocks(
+        &slide.blocks,
+        style,
+        LayoutArea {
+            x: padding,
+            y: &mut y,
+            w: content_w,
+            max_y,
+        },
+        &mut shape_id,
+        &mut image_index,
+        media,
+        &mut shapes,
+        slide_number,
+        warnings,
+    );
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -412,6 +293,217 @@ fn render_slide(
         color(&style.slide.background),
         shapes
     )
+}
+
+struct LayoutArea<'a> {
+    x: f64,
+    y: &'a mut f64,
+    w: f64,
+    max_y: f64,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_blocks(
+    blocks: &[Block],
+    style: &Style,
+    area: LayoutArea<'_>,
+    shape_id: &mut usize,
+    image_index: &mut usize,
+    media: &[MediaFile],
+    shapes: &mut String,
+    slide_number: usize,
+    warnings: &mut Vec<Warning>,
+) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(inlines) => {
+                let height = estimate_text_height(
+                    inlines,
+                    area.w,
+                    style.body.font_size,
+                    style.body.line_spacing,
+                );
+                shapes.push_str(&text_box(
+                    *shape_id,
+                    area.x + style.body.margin,
+                    *area.y,
+                    area.w - style.body.margin * 2.0,
+                    height,
+                    inlines,
+                    &style.body,
+                    Some(&style.code_inline),
+                    false,
+                    false,
+                ));
+                *shape_id += 1;
+                *area.y += height + style.body.margin_bottom;
+            }
+            Block::Heading { level, inlines } => {
+                let heading_style = heading_text_style(style, *level);
+                let height = estimate_text_height(
+                    inlines,
+                    area.w,
+                    heading_style.font_size,
+                    heading_style.line_spacing,
+                );
+                shapes.push_str(&text_box(
+                    *shape_id,
+                    area.x + heading_style.margin,
+                    *area.y,
+                    area.w - heading_style.margin * 2.0,
+                    height,
+                    inlines,
+                    heading_style,
+                    Some(&style.code_inline),
+                    false,
+                    false,
+                ));
+                *shape_id += 1;
+                *area.y += height + heading_style.margin_bottom;
+            }
+            Block::List(list) => {
+                render_list_block(
+                    list,
+                    1,
+                    shape_id,
+                    area.y,
+                    area.x,
+                    area.w,
+                    &style.list,
+                    shapes,
+                    slide_number,
+                    warnings,
+                );
+            }
+            Block::CodeBlock { code, .. } => {
+                let inlines = vec![Inline::Text(code.clone())];
+                let height = estimate_code_height(code, area.w, style.code_block.font_size)
+                    + style.code_block.padding * 2.0;
+                shapes.push_str(&box_text(
+                    *shape_id,
+                    area.x + style.code_block.margin,
+                    *area.y,
+                    area.w - style.code_block.margin * 2.0,
+                    height,
+                    &inlines,
+                    &style.code_block,
+                ));
+                *shape_id += 1;
+                *area.y += height + style.code_block.margin;
+            }
+            Block::MathBlock(source) => {
+                let inlines = vec![Inline::Text(source.clone())];
+                let height = estimate_code_height(source, area.w, style.code_block.font_size)
+                    + style.code_block.padding * 2.0;
+                shapes.push_str(&box_text(
+                    *shape_id,
+                    area.x + style.code_block.margin,
+                    *area.y,
+                    area.w - style.code_block.margin * 2.0,
+                    height,
+                    &inlines,
+                    &style.code_block,
+                ));
+                *shape_id += 1;
+                *area.y += height + style.code_block.margin;
+            }
+            Block::Table { alignments, rows } => {
+                let (table_xml, next_shape_id, height) = table_shapes(
+                    *shape_id,
+                    area.x,
+                    *area.y,
+                    area.w,
+                    alignments,
+                    rows,
+                    &style.body,
+                );
+                shapes.push_str(&table_xml);
+                *shape_id = next_shape_id;
+                *area.y += height + style.body.margin_bottom;
+            }
+            Block::Columns(columns) => {
+                let gap = style.columns.gap.min(area.w);
+                let column_w = (area.w - gap) / 2.0;
+                let start_y = *area.y;
+                let mut column_bottom = start_y;
+
+                for (column_index, column) in columns.columns.iter().enumerate() {
+                    let mut column_y = start_y;
+                    render_blocks(
+                        &column.blocks,
+                        style,
+                        LayoutArea {
+                            x: area.x + (column_w + gap) * column_index as f64,
+                            y: &mut column_y,
+                            w: column_w,
+                            max_y: area.max_y,
+                        },
+                        shape_id,
+                        image_index,
+                        media,
+                        shapes,
+                        slide_number,
+                        warnings,
+                    );
+                    column_bottom = column_bottom.max(column_y);
+                }
+
+                *area.y = column_bottom;
+            }
+            Block::Quote(inlines) => {
+                let height = estimate_text_height(inlines, area.w, style.quote.font_size, 1.2)
+                    + style.quote.padding * 2.0;
+                shapes.push_str(&quote_box(
+                    *shape_id,
+                    area.x + style.quote.margin,
+                    *area.y,
+                    area.w - style.quote.margin * 2.0,
+                    height,
+                    inlines,
+                    &style.quote,
+                ));
+                *shape_id += 1;
+                *area.y += height + style.quote.margin;
+            }
+            Block::Image { alt, .. } => {
+                if let Some(media_file) = media.get(*image_index) {
+                    // Images are laid out in the same vertical flow as text,
+                    // but their height is derived from intrinsic dimensions.
+                    let (width, height) = image_size(
+                        area.w,
+                        (area.max_y - *area.y).max(80.0),
+                        &style.image.max_width,
+                        media_file.dimensions,
+                    );
+                    let x = image_x(area.x, area.w, width, style.image.align);
+                    shapes.push_str(&image_shape(
+                        *shape_id,
+                        x,
+                        *area.y,
+                        width,
+                        height,
+                        *image_index + 1,
+                        alt,
+                    ));
+                    *shape_id += 1;
+                    *image_index += 1;
+                    *area.y += height + style.image.margin;
+                    let _ = &media_file.path;
+                }
+            }
+        }
+
+        if *area.y > area.max_y {
+            warnings.push(Warning::new(
+                WarningKind::SlideOverflow,
+                Some(slide_number),
+                format!(
+                    "content exceeds slide bounds by {:.1}pt",
+                    *area.y - area.max_y
+                ),
+            ));
+        }
+    }
 }
 
 fn heading_text_style(style: &Style, level: u8) -> &TextStyle {
@@ -1211,6 +1303,38 @@ mod tests {
             &mut archive,
             "ppt/slides/slide1.xml",
             r#"<a:off x="1219200""#,
+        );
+
+        let _ = fs::remove_file(out);
+    }
+
+    #[test]
+    fn writes_columns_as_side_by_side_blocks() {
+        let out = temp_pptx_path();
+        let presentation = parse_markdown(
+            "::: columns\n::: column\nLeft text\n:::\n::: column\nRight text\n:::\n:::",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+        write_pptx(&presentation, &Style::default(), &out).unwrap();
+
+        let file = File::open(&out).unwrap();
+        let mut archive = ZipArchive::new(file).unwrap();
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            "<a:t>Left text</a:t>",
+        );
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            "<a:t>Right text</a:t>",
+        );
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            r#"<a:off x="6248400""#,
         );
 
         let _ = fs::remove_file(out);
