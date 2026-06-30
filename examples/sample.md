@@ -1,4 +1,4 @@
-﻿# md2pptx Sample
+# md2pptx Sample
 
 Markdown から PPTX を書き出す最小サンプルです。**太字**、*斜体*、`inline code` を含みます。
 

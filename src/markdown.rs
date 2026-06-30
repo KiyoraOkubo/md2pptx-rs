@@ -22,6 +22,7 @@ pub fn parse_markdown(
     math_renderer: MathRenderer,
 ) -> Result<Presentation> {
     ensure_supported_math_renderer(math_renderer)?;
+    let markdown = markdown.strip_prefix('\u{feff}').unwrap_or(markdown);
     let mut slides = Vec::new();
     for raw_slide in split_slides(markdown) {
         if raw_slide.trim().is_empty() {
@@ -697,13 +698,13 @@ where
                 )?);
             }
             Event::Text(value) => {
-                append_item_inlines(&mut inlines, vec![Inline::Text(value.to_string())]);
+                inlines.push(Inline::Text(value.to_string()));
             }
             Event::Code(value) => {
-                append_item_inlines(&mut inlines, vec![Inline::Code(value.to_string())]);
+                inlines.push(Inline::Code(value.to_string()));
             }
             Event::SoftBreak | Event::HardBreak => {
-                append_item_inlines(&mut inlines, vec![Inline::Text("\n".into())]);
+                inlines.push(Inline::Text("\n".into()));
             }
             _ => {}
         }
@@ -853,6 +854,25 @@ mod tests {
     }
 
     #[test]
+    fn strips_utf8_bom_before_parsing_title() {
+        let presentation = parse_markdown(
+            "\u{feff}# Title\n\nBody",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+
+        assert_eq!(
+            Inline::plain_text(presentation.slides[0].title.as_ref().unwrap()),
+            "Title"
+        );
+        assert_eq!(
+            presentation.slides[0].blocks[0],
+            Block::Paragraph(vec![Inline::Text("Body".into())])
+        );
+    }
+
+    #[test]
     fn rejects_mermaid() {
         let err = parse_markdown(
             "```mermaid\ngraph TD\n```",
@@ -975,6 +995,31 @@ mod tests {
                             }],
                         }],
                     }],
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn preserves_inline_code_inside_list_items() {
+        let presentation = parse_markdown(
+            "- Split with `---` marker",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+
+        assert_eq!(
+            presentation.slides[0].blocks[0],
+            Block::List(ListBlock {
+                ordered: false,
+                items: vec![ListItem {
+                    inlines: vec![
+                        Inline::Text("Split with ".into()),
+                        Inline::Code("---".into()),
+                        Inline::Text(" marker".into()),
+                    ],
+                    children: vec![],
                 }],
             })
         );

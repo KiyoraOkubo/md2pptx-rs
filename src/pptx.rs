@@ -370,6 +370,7 @@ fn render_blocks(
                     area.x,
                     area.w,
                     &style.list,
+                    &style.code_inline,
                     shapes,
                     slide_number,
                     warnings,
@@ -526,6 +527,7 @@ fn render_list_block(
     padding: f64,
     content_w: f64,
     style: &ListStyle,
+    inline_code: &BoxStyle,
     shapes: &mut String,
     slide_number: usize,
     warnings: &mut Vec<Warning>,
@@ -563,6 +565,7 @@ fn render_list_block(
             height,
             &item_inlines,
             style,
+            inline_code,
         ));
         *shape_id += 1;
         *y += height + style.margin_bottom;
@@ -576,6 +579,7 @@ fn render_list_block(
                 padding,
                 content_w,
                 style,
+                inline_code,
                 shapes,
                 slide_number,
                 warnings,
@@ -730,6 +734,7 @@ fn list_text_box(
     h: f64,
     inlines: &[Inline],
     style: &ListStyle,
+    inline_code: &BoxStyle,
 ) -> String {
     let text_style = TextStyle {
         font_family: style.font_family.clone(),
@@ -741,7 +746,18 @@ fn list_text_box(
         margin_bottom: style.margin_bottom,
         line_spacing: style.line_spacing,
     };
-    text_box(id, x, y, w, h, inlines, &text_style, None, false, false)
+    text_box(
+        id,
+        x,
+        y,
+        w,
+        h,
+        inlines,
+        &text_style,
+        Some(inline_code),
+        false,
+        false,
+    )
 }
 
 fn box_text(
@@ -889,16 +905,60 @@ fn image_shape(id: usize, x: f64, y: f64, w: f64, h: f64, rel_index: usize, alt:
 }
 
 fn estimate_text_height(inlines: &[Inline], width: f64, font_size: f64, line_spacing: f64) -> f64 {
-    let text = Inline::plain_text(inlines);
     // PowerPoint performs its own text layout. This estimate is only used to
     // advance the simple top-to-bottom flow and produce overflow warnings.
-    let chars_per_line = (width / (font_size * 0.55)).max(12.0);
-    let logical_lines = text
-        .lines()
-        .map(|line| ((line.chars().count() as f64 / chars_per_line).ceil() as usize).max(1))
-        .sum::<usize>()
-        .max(1);
+    let logical_lines = estimate_wrapped_lines(inlines, width, font_size).max(1);
     logical_lines as f64 * font_size * line_spacing
+}
+
+fn estimate_wrapped_lines(inlines: &[Inline], width: f64, font_size: f64) -> usize {
+    let max_width = width.max(font_size);
+    let mut lines = 1;
+    let mut line_width = 0.0;
+
+    for inline in inlines {
+        let text = match inline {
+            Inline::Text(value)
+            | Inline::Bold(value)
+            | Inline::Italic(value)
+            | Inline::Code(value)
+            | Inline::Math(value) => value,
+        };
+        let run_factor = match inline {
+            Inline::Code(_) | Inline::Math(_) => 0.7,
+            Inline::Bold(_) => 1.05,
+            _ => 1.0,
+        };
+
+        for character in text.chars() {
+            if character == '\n' {
+                lines += 1;
+                line_width = 0.0;
+                continue;
+            }
+
+            let char_width = estimated_char_width(character, font_size) * run_factor;
+            if line_width > 0.0 && line_width + char_width > max_width {
+                lines += 1;
+                line_width = char_width;
+            } else {
+                line_width += char_width;
+            }
+        }
+    }
+
+    lines
+}
+
+fn estimated_char_width(character: char, font_size: f64) -> f64 {
+    let factor = if character.is_ascii_whitespace() {
+        0.32
+    } else if character.is_ascii() {
+        0.6
+    } else {
+        1.2
+    };
+    font_size * factor
 }
 
 fn estimate_code_height(code: &str, width: f64, font_size: f64) -> f64 {
@@ -1309,6 +1369,37 @@ mod tests {
     }
 
     #[test]
+    fn writes_inline_code_style_inside_list_items() {
+        let out = temp_pptx_path();
+        let presentation = parse_markdown(
+            "- Split with `---` marker",
+            Path::new("."),
+            MathRenderer::Literal,
+        )
+        .unwrap();
+        let mut style = Style::default();
+        style.code_inline.background = "#ffeeaa".into();
+        write_pptx(&presentation, &style, &out).unwrap();
+
+        let file = File::open(&out).unwrap();
+        let mut archive = ZipArchive::new(file).unwrap();
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            "<a:t>Split with </a:t>",
+        );
+        assert_contains(&mut archive, "ppt/slides/slide1.xml", "<a:t>---</a:t>");
+        assert_contains(&mut archive, "ppt/slides/slide1.xml", "<a:t> marker</a:t>");
+        assert_contains(
+            &mut archive,
+            "ppt/slides/slide1.xml",
+            r#"<a:highlight><a:srgbClr val="FFEEAA"/></a:highlight>"#,
+        );
+
+        let _ = fs::remove_file(out);
+    }
+
+    #[test]
     fn writes_columns_as_side_by_side_blocks() {
         let out = temp_pptx_path();
         let presentation = parse_markdown(
@@ -1463,6 +1554,23 @@ mod tests {
         let (width, height) = image_size(600.0, 300.0, "100%", dimensions);
         assert_eq!(width, 150.0);
         assert_eq!(height, 300.0);
+    }
+
+    #[test]
+    fn estimates_wrapped_height_for_mixed_japanese_and_inline_code() {
+        let inlines = vec![
+            Inline::Text("Markdown から PPTX を書き出す最小サンプルです。".into()),
+            Inline::Bold("太字".into()),
+            Inline::Text("、".into()),
+            Inline::Italic("斜体".into()),
+            Inline::Text("、".into()),
+            Inline::Code("inline code".into()),
+            Inline::Text(" を含みます。".into()),
+        ];
+
+        let height = estimate_text_height(&inlines, 880.0, 22.0, 1.2);
+
+        assert_eq!(height, 52.8);
     }
 
     fn temp_pptx_path() -> PathBuf {
