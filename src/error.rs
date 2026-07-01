@@ -27,4 +27,13 @@ pub enum Error {
 
     #[error("unsupported image format: {0}")]
     UnsupportedImageFormat(PathBuf),
+
+    #[error("Mermaid renderer not found: {0}")]
+    MermaidRendererNotFound(String),
+
+    #[error("Mermaid renderer failed: {0}")]
+    MermaidRendererFailed(String),
+
+    #[error("invalid Mermaid renderer output: {0}")]
+    InvalidMermaidOutput(String),
 }

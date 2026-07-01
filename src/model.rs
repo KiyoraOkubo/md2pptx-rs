@@ -25,6 +25,9 @@ pub enum Block {
         language: Option<String>,
         code: String,
     },
+    Mermaid {
+        source: String,
+    },
     MathBlock(String),
     Table {
         alignments: Vec<TableAlignment>,

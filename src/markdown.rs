@@ -498,19 +498,17 @@ fn parse_markdown_segment(
                 blocks.push(Block::Quote(collected.inlines));
             }
             Event::Start(Tag::CodeBlock(kind)) => {
-                let language = match kind {
+                let (language, is_mermaid) = match kind {
                     CodeBlockKind::Fenced(value) => {
                         let lang = value.to_string();
-                        if lang.eq_ignore_ascii_case("mermaid") {
-                            return Err(Error::UnsupportedFeature("mermaid"));
-                        }
                         if lang.eq_ignore_ascii_case("math") && math_renderer == MathRenderer::None
                         {
                             return Err(Error::UnsupportedFeature("math"));
                         }
-                        Some(lang)
+                        let is_mermaid = lang.eq_ignore_ascii_case("mermaid");
+                        (Some(lang), is_mermaid)
                     }
-                    CodeBlockKind::Indented => None,
+                    CodeBlockKind::Indented => (None, false),
                 };
                 let mut code = String::new();
                 for event in parser.by_ref() {
@@ -525,6 +523,8 @@ fn parse_markdown_segment(
                     .is_some_and(|lang| lang.eq_ignore_ascii_case("math"))
                 {
                     blocks.push(Block::MathBlock(code));
+                } else if is_mermaid {
+                    blocks.push(Block::Mermaid { source: code });
                 } else {
                     blocks.push(Block::CodeBlock { language, code });
                 }
@@ -873,14 +873,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_mermaid() {
-        let err = parse_markdown(
+    fn parses_mermaid_fenced_block() {
+        let presentation = parse_markdown(
             "```mermaid\ngraph TD\n```",
             Path::new("."),
             MathRenderer::Literal,
         )
-        .unwrap_err();
-        assert!(matches!(err, Error::UnsupportedFeature("mermaid")));
+        .unwrap();
+        assert_eq!(
+            presentation.slides[0].blocks[0],
+            Block::Mermaid {
+                source: "graph TD\n".into()
+            }
+        );
     }
 
     #[test]

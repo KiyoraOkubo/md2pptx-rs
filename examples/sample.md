@@ -23,8 +23,18 @@ fn main() {
 # Next Steps
 
 1. 画像は Markdown ファイルからの相対パスで解決
-2. Mermaid と数式は未対応エラー
+2. Mermaid は SVG 図として出力
 3. 複雑なレイアウトは今後追加
+
+---
+
+# Mermaid
+
+```mermaid
+flowchart LR
+    Markdown --> md2pptx
+    md2pptx --> PPTX
+```
 
 ---
 

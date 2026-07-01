@@ -42,11 +42,12 @@ Supported content:
 - Display math as literal text boxes
 - Block quotes
 - Markdown tables
-- PNG, JPG, and JPEG images
+- PNG, JPG, JPEG, and SVG images
+- Mermaid fenced code blocks rendered through external `mmdc`
 
 Image paths are resolved relative to the Markdown file.
 
-Mermaid blocks are rejected with unsupported-feature errors. Math is rendered as literal source text by default.
+Mermaid blocks require `mmdc` on `PATH` and are rendered as SVG images. On Windows, `md2pptx` prefers `mmdc.cmd` so npm global installs work even when PowerShell script execution is restricted. Math is rendered as literal source text by default.
 
 ## Style TOML
 
